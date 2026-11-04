@@ -2,8 +2,9 @@
 
 A full-stack web app for a small community. Members raise **issues** (for example, "Potluck Lunch"), and other members volunteer **tasks** for them ("I will bring pizza", "I will bring chips"). Everyone can see every issue and task. Only the owner can change their own issues, tasks and profile.
 
-**Live app:** https://community-app.onrender.com
-**Frontend on GitHub Pages:** https://YOUR-GITHUB-USERNAME.github.io/community-app/
+**Live app:** https://community-app.onrender.com  
+**Frontend on GitHub Pages:** https://kklnu.github.io/Community-app/  
+**Source code:** https://github.com/kklnu/Community-app
 
 > The backend runs on Render's free tier, which goes to sleep when idle. The first request after a break can take up to a minute while it wakes up.
 
