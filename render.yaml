@@ -1,0 +1,12 @@
+# Render Blueprint: New > Blueprint > pick this repo. Deploys the Node backend + frontend.
+services:
+  - type: web
+    name: community-app
+    runtime: node
+    plan: free
+    buildCommand: echo "No build step: zero dependencies"
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
