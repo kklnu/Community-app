@@ -62,6 +62,7 @@ const ICONS = {
   wrench: '<path d="M14.7 6.3a4 4 0 0 0 5 5L22 14l-8 8-2.3-2.3a4 4 0 0 0-5-5L2 10l8-8z"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/>',
   zap: '<path d="M13 2 3 14h9l-1 8 10-12h-9z"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14M12 17h.01"/>',
 };
 const CAT_ICON = { Event: 'star', Facilities: 'wrench', Safety: 'shield', Volunteering: 'hand', Fundraising: 'dollar', General: 'message' };
 const icon = (name, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
@@ -181,12 +182,13 @@ function connectLive() {
 function setLive(on) { state.live = on; const el = $('#live'); if (el) { el.classList.toggle('on', on); el.lastElementChild.textContent = on ? 'Live sync on' : 'Reconnecting…'; } }
 
 // ====================================================================== toasts & modals
-function toast(msg, kind = 'ok') {
+function toast(msg, kind = 'ok', action) {
   const el = document.createElement('div');
   el.className = `toast ${kind === 'err' ? 'err' : kind === 'ok' ? 'ok' : ''}`;
-  el.innerHTML = `${icon(kind === 'err' ? 'alert' : kind === 'live' ? 'zap' : 'tick')}<span>${esc(msg)}</span>`;
+  el.innerHTML = `${icon(kind === 'err' ? 'alert' : kind === 'live' ? 'zap' : 'tick')}<span>${esc(msg)}</span>${action ? `<button type="button" class="toast-btn">${esc(action.label)}</button>` : ''}`;
+  if (action) $('.toast-btn', el).addEventListener('click', () => { el.remove(); action.run(); });
   $('#toasts').append(el);
-  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 300); }, kind === 'err' ? 5200 : 3400);
+  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 300); }, action ? 7000 : kind === 'err' ? 5200 : 3400);
 }
 
 function closeModal() {
@@ -195,14 +197,14 @@ function closeModal() {
 }
 
 // Opens a form dialog. onSubmit receives FormData; throw to show an error inline.
-function openModal({ title, body, submit = 'Save', danger = false, onSubmit, wide = false }) {
+function openModal({ title, body, submit = 'Save', danger = false, onSubmit, wide = false, cancel = true }) {
   closeModal();
   const bg = document.createElement('div');
   bg.className = 'overlay-bg';
   bg.innerHTML = `<form class="modal" style="${wide ? 'max-width:680px' : ''}" novalidate>
     <header><h3>${esc(title)}</h3><button type="button" class="btn ghost icon" data-close aria-label="Close">${icon('x')}</button></header>
     <div class="m-body"><div class="form-error" hidden></div>${body}</div>
-    <footer><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn ${danger ? 'danger' : 'primary'}" type="submit">${esc(submit)}</button></footer>
+    <footer>${cancel ? '<button type="button" class="btn ghost" data-close>Cancel</button>' : ''}<button class="btn ${danger ? 'danger' : 'primary'}" type="submit">${esc(submit)}</button></footer>
   </form>`;
   document.body.append(bg);
   const form = $('form', bg);
@@ -257,6 +259,54 @@ function doneSwitch(t, enabled) {
     <input type="checkbox" data-act="task-toggle" data-id="${t.id}" ${t.status === 'completed' ? 'checked' : ''} ${enabled ? '' : 'disabled'} aria-label="Completed"><span class="track"></span></label>`;
 }
 
+function statusSelect(t) {
+  return `<select class="status-select st-${t.status}" data-change="task-status" data-id="${t.id}" aria-label="Task status" title="Change status">${TASK_STATUSES.map((s) =>
+    `<option value="${s}" ${s === t.status ? 'selected' : ''}>${STATUS_LABEL[s]}</option>`).join('')}</select>`;
+}
+
+const IDEAS = {
+  Event: ['I will bring dessert', 'I will bring drinks', 'I can help set up', 'I can help clean up'],
+  Facilities: ['I can bring tools', 'I can help on Saturday', 'I can pick up supplies'],
+  Safety: ['I can take an evening shift', 'I can make flyers', 'I can share the schedule'],
+  Volunteering: ['I can drive', 'I can sort donations', 'I can help on the day'],
+  Fundraising: ['I can bake something', 'I can share it online', 'I can donate'],
+  General: ['I can help', 'I can spread the word'],
+};
+function quickVolunteer(issue) {
+  const ideas = IDEAS[issue.category] || IDEAS.General;
+  return `<form class="quick-add" id="quick-volunteer" autocomplete="off">
+    <label class="qa-label" for="qv-input">${icon('hand')}Want to help? Tell everyone what you'll bring or do.</label>
+    <div class="qa-row">${avatar(state.me, 'sm')}<input class="input" id="qv-input" name="title" maxlength="140" placeholder="e.g. ${esc(ideas[0])}"><button class="btn primary" type="submit">Volunteer</button></div>
+    <div class="qa-ideas"><span class="muted small">Quick ideas:</span>${ideas.map((i) => `<button type="button" class="idea" data-idea="${esc(i)}">${esc(i)}</button>`).join('')}
+      <button type="button" class="btn ghost sm" data-act="task-new" data-issue="${issue.id}" style="margin-left:auto">More options</button></div>
+  </form>`;
+}
+
+const STEPS = [
+  ['search', 'Find an issue', 'Open Issues to see what your neighbors need help with.'],
+  ['hand', 'Volunteer', 'Open an issue, type what you will bring or do, and press Volunteer.'],
+  ['check', 'Update your tasks', 'Flip the switch when you are done. You can only change your own items.'],
+];
+const stepsHtml = () => `<div class="steps">${STEPS.map(([ic, t, d], k) => `<div class="step"><div class="step-ic">${icon(ic)}<span>${k + 1}</span></div><div><b>${t}</b><p>${d}</p></div></div>`).join('')}</div>`;
+function introCard() {
+  if (localStorage.getItem('ca_intro_done')) return '';
+  return `<section class="panel intro" id="intro">
+    <div class="row" style="justify-content:space-between;align-items:flex-start"><div><div class="eyebrow">Getting started</div><h3>How Community App works</h3></div>
+      <button class="btn ghost icon sm" data-act="intro-dismiss" aria-label="Hide this">${icon('x')}</button></div>
+    ${stepsHtml()}
+    <div class="row" style="margin-top:16px"><a class="btn primary sm" href="#/issues">${icon('issues')}Browse issues</a><button class="btn ghost sm" data-act="intro-dismiss">Got it, hide this</button></div>
+  </section>`;
+}
+function openHelp() {
+  openModal({
+    title: 'How it works', submit: 'Got it', cancel: false, onSubmit: async () => {},
+    body: `${stepsHtml()}<hr class="sep"><div class="small text-2" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
+      <span>${icon('lock')} A lock means only the owner can change that item. You can still see everything.</span>
+      <span>${icon('plus')} Need help with something? Press <b>New issue</b> in the sidebar.</span>
+      <span>${icon('search')} Press <kbd>Ctrl</kbd> + <kbd>K</kbd> to search anything.</span></div>`,
+  });
+}
+
 function issueCard(issue, { drag = false } = {}) {
   const mm = memberById();
   const owner = mm.get(issue.owner_id);
@@ -296,7 +346,7 @@ function taskRow(t, { showIssue = false } = {}) {
       </div>
     </div>
     <div class="actions">
-      ${mine ? `${statusSeg('task', t.id, t.status, TASK_STATUSES, true)}
+      ${mine ? `${statusSelect(t)}
         <button class="btn ghost icon sm" data-act="task-edit" data-id="${t.id}" title="Edit task" aria-label="Edit task">${icon('edit')}</button>
         <button class="btn ghost icon sm danger" data-act="task-delete" data-id="${t.id}" title="Withdraw from task" aria-label="Delete task">${icon('trash')}</button>`
         : `${statusBadge(t.status)}<span class="lock-note" title="Only ${esc(owner?.name)} can update this task">${icon('lock')}</span>`}
@@ -482,6 +532,7 @@ function renderShell() {
       <a class="brand" href="#/dashboard"><span class="brand-mark">${icon('logo')}</span><div>Community App<small>Members · Issues · Tasks</small></div></a>
       <nav class="nav" id="nav" aria-label="Main"></nav>
       <div class="side-foot">
+        <button class="btn ghost block sm" data-act="help">${icon('help')}How it works</button>
         <button class="btn primary block" data-act="issue-new">${icon('plus')}New issue</button>
         <div class="live" id="live"><i></i><span>Connecting…</span></div>
         <div class="me-card" id="me-card"></div>
@@ -574,7 +625,7 @@ VIEWS.dashboard = (view) => {
   const kpi = (ic, val, label, sub, color, suffix = '') => `<div class="panel kpi tilt" style="--kc:${color};--kc-bg:color-mix(in srgb, ${color} 16%, transparent);--kc-glow:color-mix(in srgb, ${color} 22%, transparent)">
     <div class="glare"></div><div class="k-ic">${icon(ic)}</div><div class="k-val" data-count="${val}" data-suffix="${suffix}">${val}${suffix}</div><div class="k-lab">${label}</div><div class="k-sub">${sub}</div></div>`;
 
-  view.innerHTML = `
+  view.innerHTML = `${introCard()}
   <div class="hero-dash">
     <div class="panel hero-card">
       <canvas id="dash-galaxy" aria-label="3D view of members, issues and tasks"></canvas>
@@ -664,7 +715,7 @@ VIEWS.issues = (view) => {
       <select class="select sm" data-filter="category" aria-label="Category">${opt('', 'All categories', f.category)}${CATEGORIES.map((c) => opt(c, c, f.category)).join('')}</select>
       <select class="select sm" data-filter="priority" aria-label="Priority">${opt('', 'Any priority', f.priority)}${PRIORITIES.map((p) => opt(p, PRIO_LABEL[p], f.priority)).join('')}</select>
       <select class="select sm" data-filter="owner" aria-label="Owner">${opt('', 'Any owner', f.owner)}${state.members.map((m) => opt(m.id, m.name, f.owner)).join('')}</select>
-      <label class="chip-toggle"><span class="switch"><input type="checkbox" id="f-mine" ${f.mine ? 'checked' : ''}><span class="track"></span></span>Involving me</label>
+      <label class="chip-toggle"><span class="switch"><input type="checkbox" id="f-mine" ${f.mine ? 'checked' : ''}><span class="track"></span></span>Only issues I'm in</label>
       <div class="spacer grow"></div>
       <div class="seg" role="group" aria-label="Layout">${[['cards', 'grid', 'Cards'], ['board', 'board', 'Board'], ['table', 'table', 'Table']].map(([v, ic, l]) => `<button type="button" data-layout="${v}" class="${f.view === v ? 'on' : ''}" title="${l}">${icon(ic)}${l}</button>`).join('')}</div>
     </div>
@@ -763,10 +814,8 @@ VIEWS.issue = (view, { id }) => {
 
   let tabBody = '';
   if (tab === 'tasks') {
-    tabBody = `${tasks.length ? tasks.map((t) => taskRow(t)).join('') : `<div class="empty">${icon('hand')}<div>No one has volunteered yet. Be the first!</div></div>`}
-      <div class="volunteer">${issue.status === 'closed'
-        ? `<span class="text-2">${icon('lock')} This issue is closed and no longer accepts volunteers.</span>`
-        : `<div><b>Want to help?</b><div class="small text-2">Add what you'll do or bring, for example “I will bring dessert”.</div></div><button class="btn primary" data-act="task-new" data-issue="${issue.id}">${icon('hand')}Volunteer</button>`}</div>`;
+    tabBody = `${issue.status === 'closed' ? `<div class="volunteer top">${icon('lock')} This issue is closed and no longer accepts volunteers.</div>` : quickVolunteer(issue)}
+      ${tasks.length ? tasks.map((t) => taskRow(t)).join('') : `<div class="empty">${icon('hand')}<div>No one has volunteered yet. Be the first!</div></div>`}`;
   } else if (tab === 'network') {
     const cpm = computeCPM(st.tasks, state.deps);
     const chain = cpm.chain.map((tid) => st.tasks.find((t) => t.id === tid)?.title).filter(Boolean);
@@ -801,7 +850,8 @@ VIEWS.issue = (view, { id }) => {
       </div>
       <div class="issue-side">
         <div class="row"><div class="ring" style="--p:${st.pct}"><b>${st.pct}%</b></div><div class="small text-2">${st.done} of ${st.total}<br>tasks done</div></div>
-        ${mine ? `${statusSeg('issue', issue.id, issue.status, ISSUE_STATUSES, true)}
+        ${issue.status !== 'closed' ? `<button class="btn primary" data-act="volunteer-focus">${icon('hand')}Volunteer</button>` : ''}
+        ${mine ? `<span class="small muted">Issue status</span>${statusSeg('issue', issue.id, issue.status, ISSUE_STATUSES, true)}
           <div class="row"><button class="btn sm" data-act="issue-edit" data-id="${issue.id}">${icon('edit')}Edit</button><button class="btn sm danger" data-act="issue-delete" data-id="${issue.id}">${icon('trash')}Delete</button></div>`
           : `<span class="lock-note">${icon('lock')}Only ${esc(firstName(owner?.name))} can edit this issue</span>`}
       </div>
@@ -810,7 +860,7 @@ VIEWS.issue = (view, { id }) => {
       <section class="panel">
         <div class="tabs" role="tablist">
           <button role="tab" class="${tab === 'tasks' ? 'on' : ''}" data-tab="tasks" aria-selected="${tab === 'tasks'}">${icon('check')}Tasks<span class="n">${st.tasks.length}</span></button>
-          <button role="tab" class="${tab === 'network' ? 'on' : ''}" data-tab="network" aria-selected="${tab === 'network'}">${icon('network')}Dependency map</button>
+          <button role="tab" class="${tab === 'network' ? 'on' : ''}" data-tab="network" aria-selected="${tab === 'network'}">${icon('network')}Task plan</button>
           <button role="tab" class="${tab === 'discussion' ? 'on' : ''}" data-tab="discussion" aria-selected="${tab === 'discussion'}">${icon('message')}Discussion<span class="n">${comments ? comments.length : issue.comment_count}</span></button>
         </div>
         <div>${tabBody}</div>
@@ -834,6 +884,25 @@ VIEWS.issue = (view, { id }) => {
 
   $$('[data-tab]', view).forEach((b) => b.addEventListener('click', () => { state.issueTab = b.dataset.tab; renderView(); }));
   $$('.g-node.mine', view).forEach((n) => n.addEventListener('click', () => openTaskForm(issue, state.tasks.find((t) => t.id === Number(n.dataset.task)))));
+  const qv = $('#quick-volunteer', view);
+  if (qv) {
+    qv.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const input = $('#qv-input', qv);
+      const title = input.value.trim();
+      if (title.length < 2) { input.focus(); toast('First type what you will bring or do', 'err'); return; }
+      const btn = $('button[type=submit]', qv);
+      btn.disabled = true;
+      try {
+        await api(`/api/issues/${issue.id}/tasks`, { method: 'POST', body: { title } });
+        input.value = '';
+        await loadAll();
+        toast('Thanks for volunteering! It now shows under My work.');
+        renderShellBits(); renderView();
+      } catch (err) { toast(err.message, 'err'); btn.disabled = false; }
+    });
+    $$('[data-idea]', qv).forEach((b) => b.addEventListener('click', () => { const i = $('#qv-input', qv); i.value = b.dataset.idea; i.focus(); }));
+  }
   const cf = $('#comment-form', view);
   cf?.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -986,10 +1055,10 @@ function openIssueForm(issue) {
     submit: edit ? 'Save changes' : 'Create issue',
     body: `<div class="form-grid">
       <div class="field full"><label for="i-title">Title</label><input class="input" id="i-title" name="title" value="${esc(i.title)}" maxlength="120" required placeholder="e.g. Potluck lunch"></div>
-      <div class="field full"><label for="i-desc">Description</label><textarea class="input" id="i-desc" name="description" maxlength="4000" placeholder="What is it, and what help do you need?">${esc(i.description)}</textarea></div>
+      <div class="field full"><label for="i-desc">Description <span class="muted">(optional)</span></label><textarea class="input" id="i-desc" name="description" maxlength="4000" placeholder="What is it, and what help do you need?">${esc(i.description)}</textarea></div>
       <div class="field"><label for="i-cat">Category</label><select class="select" id="i-cat" name="category">${options(CATEGORIES, i.category)}</select></div>
       <div class="field"><label for="i-pri">Priority</label><select class="select" id="i-pri" name="priority">${options(PRIORITIES, i.priority, PRIO_LABEL)}</select></div>
-      <div class="field"><label for="i-due">Due date</label><input class="input" type="date" id="i-due" name="due_date" value="${esc(i.due_date || '')}"></div>
+      <div class="field"><label for="i-due">Due date <span class="muted">(optional)</span></label><input class="input" type="date" id="i-due" name="due_date" value="${esc(i.due_date || '')}"></div>
       ${edit ? `<div class="field"><label for="i-st">Status</label><select class="select" id="i-st" name="status">${options(ISSUE_STATUSES, i.status, STATUS_LABEL)}</select></div>` : ''}
     </div>`,
     onSubmit: async (fd) => {
@@ -1014,11 +1083,13 @@ function openTaskForm(issue, task) {
     body: `<div class="form-grid">
       <div class="field full"><label for="t-title">What will you do or bring?</label><input class="input" id="t-title" name="title" value="${esc(t.title)}" maxlength="140" required placeholder="I will bring…"></div>
       <div class="field full"><label for="t-notes">Notes <span class="muted">(optional)</span></label><textarea class="input" id="t-notes" name="notes" maxlength="1000" style="min-height:70px">${esc(t.notes)}</textarea></div>
-      <div class="field"><label for="t-dur">Effort (days)</label><input class="input" type="number" id="t-dur" name="duration" min="0" max="999" step="0.5" value="${esc(t.duration)}"><span class="hint">Used for critical-path planning.</span></div>
+      ${edit ? `<div class="field full"><label for="t-st">Status</label><select class="select" id="t-st" name="status">${options(TASK_STATUSES, t.status, STATUS_LABEL)}</select></div>` : ''}
+      <details class="more full" ${edit && (current.size || t.due_date) ? 'open' : ''}><summary>Planning options <span class="muted">(optional)</span></summary><div class="form-grid">
+      <div class="field"><label for="t-dur">How many days will it take?</label><input class="input" type="number" id="t-dur" name="duration" min="0" max="999" step="0.5" value="${esc(t.duration)}"><span class="hint">Helps plan the order of tasks.</span></div>
       <div class="field"><label for="t-due">Due date</label><input class="input" type="date" id="t-due" name="due_date" value="${esc(t.due_date || '')}"></div>
-      ${edit ? `<div class="field"><label for="t-st">Status</label><select class="select" id="t-st" name="status">${options(TASK_STATUSES, t.status, STATUS_LABEL)}</select></div>` : ''}
-      ${others.length ? `<div class="field full"><label>Starts after <span class="muted">(dependencies)</span></label><div class="checks">${others.map((o) =>
+      ${others.length ? `<div class="field full"><label>Do this after these tasks are done</label><div class="checks">${others.map((o) =>
         `<label><input type="checkbox" name="depends_on" value="${o.id}" ${current.has(o.id) ? 'checked' : ''}>${esc(o.title)} <span class="muted">· ${esc(firstName(mm.get(o.owner_id)?.name))}</span></label>`).join('')}</div></div>` : ''}
+      </div></details>
     </div>`,
     onSubmit: async (fd) => {
       const body = { title: fd.get('title'), notes: fd.get('notes'), duration: Number(fd.get('duration') || 0), due_date: fd.get('due_date'), depends_on: fd.getAll('depends_on').map(Number) };
@@ -1084,7 +1155,7 @@ async function setIssueStatus(id, status) {
   renderShellBits(); renderView();
   try {
     await api(`/api/issues/${id}`, { method: 'PUT', body: { status } });
-    toast(`“${issue.title}” is now ${STATUS_LABEL[status].toLowerCase()}`);
+    toast(`“${issue.title}” is now ${STATUS_LABEL[status].toLowerCase()}`, 'ok', { label: 'Undo', run: () => setIssueStatus(id, prev) });
     await loadAll(); safeRerender();
   } catch (err) { issue.status = prev; renderView(); toast(err.message, 'err'); }
 }
@@ -1096,7 +1167,7 @@ async function setTaskStatus(id, status) {
   renderShellBits(); renderView();
   try {
     await api(`/api/tasks/${id}`, { method: 'PUT', body: { status } });
-    toast(status === 'completed' ? `Nice work! “${task.title}” completed` : `“${task.title}” → ${STATUS_LABEL[status]}`);
+    toast(status === 'completed' ? `Nice work! “${task.title}” completed` : `“${task.title}” is now ${STATUS_LABEL[status].toLowerCase()}`, 'ok', { label: 'Undo', run: () => setTaskStatus(id, prev) });
     await loadAll(); safeRerender();
   } catch (err) { task.status = prev; renderView(); toast(err.message, 'err'); }
 }
@@ -1152,6 +1223,16 @@ document.addEventListener('click', (e) => {
       case 'password': return openPasswordForm();
       case 'export': return exportCsv();
       case 'palette': return openPalette();
+      case 'help': return openHelp();
+      case 'intro-dismiss': localStorage.setItem('ca_intro_done', '1'); $('#intro')?.remove(); return toast('You can reopen this anytime from “How it works”.');
+      case 'volunteer-focus': {
+        state.issueTab = 'tasks';
+        renderView();
+        const i = $('#qv-input');
+        i?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        setTimeout(() => i?.focus(), 250);
+        return;
+      }
       case 'menu': return $('#shell').classList.toggle('nav-open');
       case 'logout': api('/api/auth/logout', { method: 'POST' }).catch(() => {}).finally(() => { signOutLocal(); toast('Signed out'); }); return;
     }
@@ -1165,6 +1246,7 @@ document.addEventListener('click', (e) => {
 document.addEventListener('change', (e) => {
   const t = e.target;
   if (t.matches('[data-act="task-toggle"]')) setTaskStatus(Number(t.dataset.id), t.checked ? 'completed' : 'open');
+  if (t.matches('[data-change="task-status"]')) setTaskStatus(Number(t.dataset.id), t.value);
 });
 
 // 3D tilt on cards
