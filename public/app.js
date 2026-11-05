@@ -1,4 +1,6 @@
-import { API_BASE } from './config.js';
+// Community App: demo login (password is the same for every demo member)
+//   Email: susan@community.example   Password: community123
+import { localApi, onChange } from './js/store.js';
 import { Galaxy, fibonacciSphere } from './js/galaxy.js';
 import { computeCPM, renderGraph } from './js/graph.js';
 
@@ -13,8 +15,8 @@ const PRIO_LABEL = { low: 'Low', medium: 'Medium', high: 'High', critical: 'Crit
 const PRIO_COLOR = { low: '#8a8fa3', medium: '#3987e5', high: '#ec835a', critical: '#d03b3b' };
 const PRIO_RANK = { critical: 0, high: 1, medium: 2, low: 3 };
 const DEMO = [
-  ['susan', 'Susan Miller', '#8b5cf6'], ['joey', 'Joey Carter', '#f59e0b'], ['sam', 'Sam Patel', '#10b981'],
-  ['lisa', 'Lisa Chen', '#ec4899'], ['george', 'George Brooks', '#06b6d4'],
+  ['susan@community.example', 'Susan Miller', '#8b5cf6'], ['joey@community.example', 'Joey Carter', '#f59e0b'], ['sam@community.example', 'Sam Patel', '#10b981'],
+  ['lisa@community.example', 'Lisa Chen', '#ec4899'], ['george@community.example', 'George Brooks', '#06b6d4'],
 ];
 const DEMO_PASSWORD = 'community123';
 
@@ -97,7 +99,8 @@ const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const state = {
   token: localStorage.getItem('ca_token'),
   me: null, members: [], issues: [], tasks: [], deps: [], activity: [],
-  comments: {},
+  comments: [],
+  openThreads: new Set(),
   filters: { q: '', status: 'active', category: '', priority: '', owner: '', mine: false, view: localStorage.getItem('ca_view') || 'cards', sort: 'updated_at', dir: -1 },
   issueTab: 'tasks',
   galaxyCam: null, galaxyAuto: true, galaxyMine: false,
@@ -122,19 +125,12 @@ function issueStats(issue) {
 
 // ====================================================================== api
 async function api(path, { method = 'GET', body } = {}) {
-  const headers = { 'X-Requested-With': 'community-app' };
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
-  if (state.token) headers.Authorization = `Bearer ${state.token}`;
-  let res;
   try {
-    res = await fetch(API_BASE + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
-  } catch {
-    throw new Error('Cannot reach the server. Check your connection and try again.');
+    return await localApi(path, { method, body: body === undefined ? undefined : JSON.parse(JSON.stringify(body)) }, state.token);
+  } catch (err) {
+    if (err.status === 401 && !path.startsWith('/api/auth/')) signOutLocal();
+    throw err;
   }
-  const data = await res.json().catch(() => ({}));
-  if (res.status === 401 && path !== '/api/auth/login') { signOutLocal(); throw new Error(data.error || 'Please sign in'); }
-  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
-  return data;
 }
 
 async function loadAll() {
@@ -148,7 +144,6 @@ function scheduleRefresh(issueId) {
   refreshTimer = setTimeout(async () => {
     try {
       await loadAll();
-      if (issueId && state.comments[issueId]) state.comments[issueId] = await api(`/api/issues/${issueId}/comments`);
       safeRerender();
     } catch { /* surfaced elsewhere */ }
   }, 250);
@@ -165,21 +160,20 @@ function safeRerender() {
 }
 document.addEventListener('focusout', () => setTimeout(() => { if (state.stale) safeRerender(); }, 150));
 
-// live updates (server-sent events)
-let es = null;
+// live updates between open tabs
+let liveBound = false;
 function connectLive() {
-  es?.close();
-  if (!state.token) return;
-  es = new EventSource(`${API_BASE}/api/events?token=${encodeURIComponent(state.token)}`);
-  es.onopen = () => setLive(true);
-  es.onerror = () => setLive(false);
-  es.onmessage = (e) => {
-    let ev; try { ev = JSON.parse(e.data); } catch { return; }
-    if (ev.type !== 'change' || !state.me) return;
-    if (ev.by !== state.me.id) { toast(ev.summary, 'live'); scheduleRefresh(ev.issueId); }
-  };
+  if (!liveBound) {
+    liveBound = true;
+    onChange((ev) => {
+      if (ev.type !== 'change' || !state.me) return;
+      if (ev.by !== state.me.id) toast(ev.summary, 'live');
+      scheduleRefresh();
+    });
+  }
+  setLive(true);
 }
-function setLive(on) { state.live = on; const el = $('#live'); if (el) { el.classList.toggle('on', on); el.lastElementChild.textContent = on ? 'Live sync on' : 'Reconnecting…'; } }
+function setLive(on) { state.live = on; const el = $('#live'); if (el) { el.classList.toggle('on', on); el.lastElementChild.textContent = on ? 'Saved · syncs across tabs' : 'Signed out'; } }
 
 // ====================================================================== toasts & modals
 function toast(msg, kind = 'ok', action) {
@@ -303,7 +297,8 @@ function openHelp() {
     body: `${stepsHtml()}<hr class="sep"><div class="small text-2" style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
       <span>${icon('lock')} A lock means only the owner can change that item. You can still see everything.</span>
       <span>${icon('plus')} Need help with something? Press <b>New issue</b> in the sidebar.</span>
-      <span>${icon('search')} Press <kbd>Ctrl</kbd> + <kbd>K</kbd> to search anything.</span></div>`,
+      <span>${icon('search')} Press <kbd>Ctrl</kbd> + <kbd>K</kbd> to search anything.</span>
+      <span>${icon('rotate')} Data is saved in this browser. <button type="button" class="link-btn" data-act="reset-demo" style="display:inline;padding:0">Reset demo data</button></span></div>`,
   });
 }
 
@@ -343,6 +338,7 @@ function taskRow(t, { showIssue = false } = {}) {
         <span>${icon('clock')}${t.duration} day${t.duration === 1 ? '' : 's'}</span>
         ${t.due_date ? `<span>${icon('calendar')}${esc(dueInfo(t.due_date, ['completed', 'closed'].includes(t.status)).label)}</span>` : ''}
         ${depNames.length ? `<span title="Starts after: ${esc(depNames.join(', '))}">${icon('network')}After ${esc(depNames.length === 1 ? depNames[0] : plural(depNames.length, 'task'))}</span>` : ''}
+        <button type="button" class="link-btn ${state.openThreads.has(t.id) ? 'on' : ''}" data-act="thread" data-id="${t.id}" aria-expanded="${state.openThreads.has(t.id)}">${icon('message')}${t.comment_count ? plural(t.comment_count, 'comment') : 'Comment'}</button>
       </div>
     </div>
     <div class="actions">
@@ -351,6 +347,23 @@ function taskRow(t, { showIssue = false } = {}) {
         <button class="btn ghost icon sm danger" data-act="task-delete" data-id="${t.id}" title="Withdraw from task" aria-label="Delete task">${icon('trash')}</button>`
         : `${statusBadge(t.status)}<span class="lock-note" title="Only ${esc(owner?.name)} can update this task">${icon('lock')}</span>`}
     </div>
+  </div>${state.openThreads.has(t.id) ? threadHtml(t) : ''}`;
+}
+
+// Comments live on tasks. Everyone can read and post; only the author can edit or delete.
+function threadHtml(t) {
+  const mm = memberById();
+  const list = state.comments.filter((c) => c.task_id === t.id);
+  return `<div class="thread" data-thread="${t.id}">
+    ${list.map((c) => {
+      const m = mm.get(c.member_id);
+      const own = c.member_id === state.me.id;
+      return `<div class="comment ${own ? 'mine' : ''}">${avatar(m, 'xs')}<div class="bubble"><header><b>${esc(m?.name)}</b>
+        <time title="${esc(new Date(c.created_at).toLocaleString())}">${relTime(c.created_at)}${c.updated_at !== c.created_at ? ' · edited' : ''}</time>
+        ${own ? `<span class="c-actions"><button type="button" data-act="comment-edit" data-id="${c.id}">Edit</button><button type="button" data-act="comment-delete" data-id="${c.id}">Delete</button></span>` : ''}</header>
+        <p>${esc(c.body)}</p></div></div>`;
+    }).join('') || '<div class="muted small">No comments on this task yet.</div>'}
+    <form class="comment-form" data-task="${t.id}">${avatar(state.me, 'xs')}<textarea class="input" name="body" placeholder="Write a comment on this task…" maxlength="2000" required aria-label="Comment on ${esc(t.title)}"></textarea><button class="btn primary sm" type="submit">Post</button></form>
   </div>`;
 }
 
@@ -450,7 +463,7 @@ function renderAuth() {
         <div class="eyebrow">Neighborhood operations platform</div>
         <h1>Where your community <span class="grad-text">gets things done.</span></h1>
         <p>Raise issues, volunteer for tasks and watch progress live, from potluck lunches to playground fundraisers.</p>
-        <div class="auth-feats"><span>3D community galaxy</span><span>Live sync</span><span>Owner-only edits</span><span>Critical-path planning</span><span>Kanban board</span></div>
+        <div class="auth-feats"><span>3D community galaxy</span><span>Installable app</span><span>Works offline</span><span>Owner-only edits</span><span>Critical-path planning</span><span>Kanban board</span></div>
       </div>
       <div class="muted small">© ${new Date().getFullYear()} Community App</div>
     </section>
@@ -462,8 +475,8 @@ function renderAuth() {
         <form id="auth-form" novalidate>
           <div class="form-error" hidden></div>
           ${login ? '' : `<div class="field"><label for="f-name">Full name</label><input class="input" id="f-name" name="name" autocomplete="name" required></div>`}
-          <div class="field"><label for="f-user">Username</label><input class="input" id="f-user" name="username" autocomplete="username" required></div>
-          ${login ? '' : `<div class="field"><label for="f-email">Email <span class="muted">(optional)</span></label><input class="input" id="f-email" name="email" type="email" autocomplete="email"></div>`}
+          <div class="field"><label for="f-user">Email</label><input class="input" id="f-user" name="email" type="email" autocomplete="email" required placeholder="you@example.com"></div>
+          ${login ? '' : `<div class="field"><label for="f-phone">Phone <span class="muted">(optional)</span></label><input class="input" id="f-phone" name="phone" type="tel" autocomplete="tel"></div>`}
           <div class="field"><label for="f-pass">Password</label><input class="input" id="f-pass" name="password" type="password" autocomplete="${login ? 'current-password' : 'new-password'}" required>${login ? '' : '<span class="hint">At least 8 characters.</span>'}</div>
           <button class="btn primary block" type="submit">${login ? 'Sign in' : 'Create account'}</button>
         </form>
@@ -559,7 +572,7 @@ function renderShellBits() {
   const counts = { issues: state.issues.filter((i) => i.status !== 'closed').length, 'my-work': myOpen, members: state.members.length };
   nav.innerHTML = `<div class="nav-title">Workspace</div>${NAV.map(([k, label, ic]) =>
     `<a href="#/${k}" class="${route.page === k || (k === 'issues' && route.page === 'issue') || (k === 'members' && route.page === 'member') ? 'on' : ''}" ${route.page === k ? 'aria-current="page"' : ''}>${icon(ic)}${label}${counts[k] ? `<span class="count">${counts[k]}</span>` : ''}</a>`).join('')}`;
-  $('#me-card').innerHTML = `${avatar(state.me, 'sm')}<a class="who" href="#/members/${state.me.id}"><b>${esc(state.me.name)}</b><span>@${esc(state.me.username)}</span></a>
+  $('#me-card').innerHTML = `${avatar(state.me, 'sm')}<a class="who" href="#/members/${state.me.id}"><b>${esc(state.me.name)}</b><span>${esc(state.me.email)}</span></a>
     <button class="btn ghost icon sm" data-act="logout" title="Sign out" aria-label="Sign out">${icon('logout')}</button>`;
   $('#my-open-count').textContent = `${myOpen} open`;
 }
@@ -807,9 +820,7 @@ VIEWS.issue = (view, { id }) => {
   const mine = issue.owner_id === state.me.id;
   const st = issueStats(issue);
   const tasks = st.tasks.slice().sort((a, b) => TASK_STATUSES.indexOf(a.status) - TASK_STATUSES.indexOf(b.status) || a.id - b.id);
-  const comments = state.comments[issue.id];
-  if (!comments) api(`/api/issues/${issue.id}/comments`).then((c) => { state.comments[issue.id] = c; if (parseRoute().id === issue.id) safeRerender(); }).catch(() => {});
-  const tab = state.issueTab;
+  const tab = state.issueTab === 'network' ? 'network' : 'tasks';
   const issueActivity = state.activity.filter((a) => a.issue_id === issue.id).slice(0, 6);
 
   let tabBody = '';
@@ -826,13 +837,6 @@ VIEWS.issue = (view, { id }) => {
       <div class="graph-wrap">${renderGraph(st.tasks, cpm, mm, state.me.id)}</div>
       <p class="small muted" style="padding:0 20px 16px;margin:0">Tasks are laid out by dependency. The critical path is the longest chain by duration: any delay there delays the whole issue. Click one of your tasks to edit its dependencies.</p>`
       : `<div class="empty">${icon('network')}<div>Add tasks to see the dependency network.</div></div>`;
-  } else {
-    tabBody = `<div class="comments">${!comments ? '<div class="muted">Loading discussion…</div>' : comments.length ? comments.map((c) => {
-      const m = mm.get(c.member_id);
-      const own = c.member_id === state.me.id;
-      return `<div class="comment ${own ? 'mine' : ''}">${avatar(m, 'sm')}<div class="bubble"><header><b>${esc(m?.name)}</b><time title="${esc(new Date(c.created_at).toLocaleString())}">${relTime(c.created_at)}</time>${own ? `<button data-act="comment-delete" data-id="${c.id}" data-issue="${issue.id}">Delete</button>` : ''}</header><p>${esc(c.body)}</p></div></div>`;
-    }).join('') : '<div class="empty">No comments yet. Start the conversation.</div>'}</div>
-      <form class="comment-form" id="comment-form">${avatar(state.me, 'sm')}<textarea class="input" name="body" placeholder="Write a comment…" maxlength="2000" aria-label="Comment" required></textarea><button class="btn primary" type="submit">Post</button></form>`;
   }
 
   view.innerHTML = `
@@ -861,7 +865,6 @@ VIEWS.issue = (view, { id }) => {
         <div class="tabs" role="tablist">
           <button role="tab" class="${tab === 'tasks' ? 'on' : ''}" data-tab="tasks" aria-selected="${tab === 'tasks'}">${icon('check')}Tasks<span class="n">${st.tasks.length}</span></button>
           <button role="tab" class="${tab === 'network' ? 'on' : ''}" data-tab="network" aria-selected="${tab === 'network'}">${icon('network')}Task plan</button>
-          <button role="tab" class="${tab === 'discussion' ? 'on' : ''}" data-tab="discussion" aria-selected="${tab === 'discussion'}">${icon('message')}Discussion<span class="n">${comments ? comments.length : issue.comment_count}</span></button>
         </div>
         <div>${tabBody}</div>
       </section>
@@ -903,23 +906,6 @@ VIEWS.issue = (view, { id }) => {
     });
     $$('[data-idea]', qv).forEach((b) => b.addEventListener('click', () => { const i = $('#qv-input', qv); i.value = b.dataset.idea; i.focus(); }));
   }
-  const cf = $('#comment-form', view);
-  cf?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const body = new FormData(cf).get('body').trim();
-    if (!body) return;
-    const btn = $('button', cf);
-    btn.disabled = true;
-    try {
-      const c = await api(`/api/issues/${issue.id}/comments`, { method: 'POST', body: { body } });
-      state.comments[issue.id] = [...(state.comments[issue.id] || []), c];
-      issue.comment_count++;
-      cf.reset();
-      renderView();
-      scheduleRefresh();
-    } catch (err) { toast(err.message, 'err'); btn.disabled = false; }
-  });
-  cf?.querySelector('textarea').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) cf.requestSubmit(); });
 };
 
 // ====================================================================== my work
@@ -978,7 +964,7 @@ VIEWS.member = (view, { id }) => {
       ${avatar(m, 'xl')}
       <div class="grow">
         <h1>${esc(m.name)} ${me ? '<span class="mine-tag">You</span>' : ''}</h1>
-        <p>${esc(m.title || 'Community member')} · @${esc(m.username)}</p>
+        <p>${esc(m.title || 'Community member')}</p>
         ${m.bio ? `<p style="max-width:620px">${esc(m.bio)}</p>` : ''}
         <div class="meta" style="margin-top:12px">
           ${m.location ? `<span>${icon('pin')}${esc(m.location)}</span>` : ''}
@@ -1111,7 +1097,7 @@ function openProfileForm() {
     body: `<div class="form-grid">
       <div class="field"><label for="p-name">Full name</label><input class="input" id="p-name" name="name" value="${esc(m.name)}" required maxlength="60"></div>
       <div class="field"><label for="p-title">Role / title</label><input class="input" id="p-title" name="title" value="${esc(m.title)}" maxlength="80"></div>
-      <div class="field"><label for="p-email">Email</label><input class="input" type="email" id="p-email" name="email" value="${esc(m.email)}" maxlength="120"></div>
+      <div class="field"><label for="p-email">Email <span class="muted">(used to sign in)</span></label><input class="input" type="email" id="p-email" name="email" value="${esc(m.email)}" maxlength="120" required></div>
       <div class="field"><label for="p-phone">Phone</label><input class="input" id="p-phone" name="phone" value="${esc(m.phone)}" maxlength="40"></div>
       <div class="field full"><label for="p-loc">Location</label><input class="input" id="p-loc" name="location" value="${esc(m.location)}" maxlength="80"></div>
       <div class="field full"><label for="p-bio">Bio</label><textarea class="input" id="p-bio" name="bio" maxlength="500">${esc(m.bio)}</textarea></div>
@@ -1176,7 +1162,6 @@ function signOutLocal() {
   state.token = null;
   state.me = null;
   localStorage.removeItem('ca_token');
-  es?.close();
   setLive(false);
   renderAuth();
 }
@@ -1211,19 +1196,38 @@ document.addEventListener('click', (e) => {
           safeRerenderSoon();
         }, 'Withdraw');
       }
-      case 'comment-delete': {
-        const issueId = Number(act.dataset.issue);
-        return api(`/api/comments/${id}`, { method: 'DELETE' }).then(() => {
-          state.comments[issueId] = state.comments[issueId].filter((c) => c.id !== id);
-          const iss = issueById(issueId); if (iss) iss.comment_count = Math.max(0, iss.comment_count - 1);
-          renderView();
-        }).catch((err) => toast(err.message, 'err'));
+      case 'thread': {
+        if (state.openThreads.has(id)) state.openThreads.delete(id); else state.openThreads.add(id);
+        renderView();
+        if (state.openThreads.has(id)) setTimeout(() => $(`.comment-form[data-task="${id}"] textarea`)?.focus(), 30);
+        return;
       }
+      case 'comment-edit': {
+        const c = state.comments.find((x) => x.id === id);
+        return openModal({
+          title: 'Edit comment', submit: 'Save comment',
+          body: `<div class="field"><label for="c-body">Comment</label><textarea class="input" id="c-body" name="body" maxlength="2000" required>${esc(c.body)}</textarea></div>`,
+          onSubmit: async (fd) => { await api(`/api/comments/${id}`, { method: 'PUT', body: { body: fd.get('body') } }); await loadAll(); toast('Comment updated'); safeRerenderSoon(); },
+        });
+      }
+      case 'comment-delete':
+        return confirmModal('Delete comment?', 'Your comment will be removed.', async () => {
+          await api(`/api/comments/${id}`, { method: 'DELETE' });
+          await loadAll();
+          toast('Comment deleted');
+          safeRerenderSoon();
+        });
       case 'profile-edit': return openProfileForm();
       case 'password': return openPasswordForm();
       case 'export': return exportCsv();
       case 'palette': return openPalette();
       case 'help': return openHelp();
+      case 'reset-demo':
+        return confirmModal('Reset demo data?', 'All issues, tasks, comments and accounts go back to the original demo community. You will be signed out.', async () => {
+          await api('/api/reset', { method: 'POST' });
+          signOutLocal();
+          toast('Demo data restored');
+        }, 'Reset');
       case 'intro-dismiss': localStorage.setItem('ca_intro_done', '1'); $('#intro')?.remove(); return toast('You can reopen this anytime from “How it works”.');
       case 'volunteer-focus': {
         state.issueTab = 'tasks';
@@ -1241,6 +1245,26 @@ document.addEventListener('click', (e) => {
   // card / row navigation (ignore clicks on inner links and controls)
   const nav = e.target.closest('[data-href]');
   if (nav && !e.target.closest('a, button, input, label, select')) location.hash = nav.dataset.href;
+});
+
+document.addEventListener('submit', async (e) => {
+  const form = e.target.closest('.comment-form[data-task]');
+  if (!form) return;
+  e.preventDefault();
+  const body = new FormData(form).get('body').trim();
+  if (!body) return;
+  const btn = $('button[type=submit]', form);
+  btn.disabled = true;
+  try {
+    await api(`/api/tasks/${form.dataset.task}/comments`, { method: 'POST', body: { body } });
+    form.reset();
+    await loadAll();
+    renderShellBits(); renderView();
+    $(`.comment-form[data-task="${form.dataset.task}"] textarea`)?.focus();
+  } catch (err) { toast(err.message, 'err'); btn.disabled = false; }
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && e.target.closest?.('.comment-form[data-task]')) e.target.closest('form').requestSubmit();
 });
 
 document.addEventListener('change', (e) => {
@@ -1313,19 +1337,16 @@ document.addEventListener('keydown', (e) => {
 async function boot() {
   if (!state.token) return renderAuth();
   if (!$('.shell')) {
-    $('#root').innerHTML = `<div class="boot"><div class="boot-orb"></div><div>Loading your community…</div><small id="boot-slow" hidden>The free server is waking up. This can take up to a minute the first time.</small></div>`;
+    $('#root').innerHTML = `<div class="boot"><div class="boot-orb"></div><div>Loading your community…</div></div>`;
   }
-  const slow = setTimeout(() => { const s = $('#boot-slow'); if (s) s.hidden = false; }, 3500);
   try {
     await loadAll();
   } catch (err) {
-    clearTimeout(slow);
     if (!state.token) return; // signOutLocal already rendered the login screen
     $('#root').innerHTML = `<div class="boot"><div>${icon('alert')}</div><div>${esc(err.message)}</div><button class="btn" id="retry">Try again</button></div>`;
     $('#retry').addEventListener('click', boot);
     return;
   }
-  clearTimeout(slow);
   if (!location.hash || location.hash === '#/') history.replaceState(null, '', '#/dashboard');
   state.lastViewKey = '';
   renderShell();
@@ -1333,6 +1354,8 @@ async function boot() {
   connectLive();
 }
 
-// Wake the backend early (free hosting sleeps when idle) so sign-in feels fast.
-fetch(`${API_BASE}/api/health`).catch(() => {});
+// Progressive Web App: cache the app shell so it installs and works offline.
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
 boot();

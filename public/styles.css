@@ -539,3 +539,19 @@ details.more summary::-webkit-details-marker { display: none; }
 details.more summary::before { content: '\203A'; display: inline-block; font-size: 17px; line-height: 1; transition: transform 0.15s; }
 details.more[open] summary::before { transform: rotate(90deg); }
 @media (max-width: 900px) { .steps { grid-template-columns: 1fr; } }
+
+/* ---------------------------------------------------------- task comments */
+.link-btn { background: none; border: 0; padding: 0; color: var(--muted); cursor: pointer; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-family: inherit; }
+.link-btn:hover, .link-btn.on { color: var(--text); }
+.link-btn svg { width: 13px; }
+.thread { padding: 4px 20px 16px 72px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.015); display: flex; flex-direction: column; gap: 10px; }
+.thread .comment .bubble { padding: 8px 12px; }
+.thread .comment p { font-size: 13px; }
+.thread .comment-form { padding: 4px 0 0; border-top: 0; gap: 10px; }
+.thread .comment-form textarea { min-height: 40px; font-size: 13px; }
+.c-actions { margin-left: auto; display: inline-flex; gap: 10px; }
+.c-actions button { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 12px; padding: 0; }
+.c-actions button:hover { color: var(--text); }
+.c-actions button[data-act="comment-delete"]:hover { color: var(--danger); }
+@container (max-width: 560px) { .thread { padding-left: 20px; } }
+.me-card .who span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

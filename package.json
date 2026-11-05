@@ -1,14 +1,9 @@
 {
   "name": "community-app",
-  "version": "1.0.0",
-  "description": "Community App: members, issues and tasks with a 3D community galaxy and critical-path network views.",
-  "main": "server.js",
+  "version": "2.0.0",
+  "description": "Community App: a PWA for member profiles, issues, tasks and task comments, deployed on GitHub Pages.",
   "private": true,
-  "engines": {
-    "node": ">=22.13"
-  },
   "scripts": {
-    "start": "node --no-warnings server.js",
-    "reset": "node -e \"require('fs').rmSync('data',{recursive:true,force:true})\" && node --no-warnings server.js"
+    "start": "node serve.js"
   }
 }
