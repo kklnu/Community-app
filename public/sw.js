@@ -1,8 +1,8 @@
 // Service worker: caches the app shell so Community App installs and works offline.
 // Bump VERSION whenever the files change so visitors get the update.
-const VERSION = 'community-app-v3';
+const VERSION = 'community-app-v4';
 const SHELL = [
-  './', 'index.html', 'styles.css', 'app.js', 'js/store.js', 'js/galaxy.js', 'js/graph.js',
+  './', 'index.html', 'styles.css?v=4', 'app.js?v=4', 'js/store.js?v=4', 'js/galaxy.js?v=4', 'js/graph.js?v=4',
   'favicon.svg', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
 ];
 

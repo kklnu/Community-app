@@ -1,8 +1,8 @@
 // Community App: demo login (password is the same for every demo member)
 //   Email: susan@community.example   Password: community123
-import { localApi, onChange } from './js/store.js';
-import { Galaxy, fibonacciSphere } from './js/galaxy.js';
-import { computeCPM, renderGraph } from './js/graph.js';
+import { localApi, onChange } from './js/store.js?v=4';
+import { Galaxy, fibonacciSphere } from './js/galaxy.js?v=4';
+import { computeCPM, renderGraph } from './js/graph.js?v=4';
 
 // ====================================================================== constants
 const CATEGORIES = ['Event', 'Facilities', 'Safety', 'Volunteering', 'Fundraising', 'General'];
